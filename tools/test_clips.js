@@ -15,7 +15,9 @@ function stub() {
     setAttribute() {}, removeAttribute() {}, addEventListener() {},
     toggleAttribute() {},
     removeEventListener() {}, focus() {}, blur() {}, scrollIntoView() {},
-    showModal() {}, pause() {}, play: () => Promise.resolve(),
+    showModal() {},
+    pause() { this.paused = true; },
+    play() { this.paused = false; return Promise.resolve(); },
     matches: () => false, closest: () => null,
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 500 }),
   };
@@ -172,6 +174,47 @@ setUp([{ start: 0, end: 10, name: "kept", saved: true },
        { start: 20, end: 30, name: "", saved: false, untouched: false }]);
 vm.runInContext("selectClip(0); deleteClip()", context);
 check("a saved clip is not dropped from the bar", ranges(), [[0, 10], [20, 30]]);
+
+console.log("arrow keys");
+function arrow(key, held = {}) {
+  vm.runInContext(`onKey({key: "${key}", shiftKey: ${Boolean(held.shift)},
+                          ctrlKey: ${Boolean(held.ctrl)}, altKey: false,
+                          metaKey: false, preventDefault() {},
+                          target: {matches: () => false}})`, context);
+}
+setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
+vm.runInContext("state.marker = null; player.currentTime = 10; player.paused = false",
+                context);
+arrow("ArrowRight");
+check("a bare arrow seeks two seconds",
+      vm.runInContext("player.currentTime", context), 12);
+arrow("ArrowRight", { shift: true });
+check("shift steps the playhead one frame at 25 fps",
+      vm.runInContext("player.currentTime", context), 12.04);
+check("and pauses to do it", vm.runInContext("player.paused", context), true);
+vm.runInContext("state.marker = 'end'", context);
+arrow("ArrowLeft");
+check("with a marker selected a bare arrow moves it a second", ranges(), [[0, 59]]);
+arrow("ArrowLeft", { shift: true });
+check("and shift moves it one frame", ranges(), [[0, 58.96]]);
+
+console.log("speed");
+setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
+vm.runInContext("state.marker = null; setRate(1); player.currentTime = 10", context);
+arrow("ArrowRight", { ctrl: true });
+check("ctrl and right speeds up", vm.runInContext("state.rate", context), 2);
+arrow("ArrowRight", { ctrl: true });
+check("the fastest speed is the end of it", vm.runInContext("state.rate", context), 2);
+arrow("ArrowLeft", { ctrl: true });
+arrow("ArrowLeft", { ctrl: true });
+arrow("ArrowLeft", { ctrl: true });
+check("ctrl and left walks down to slomo",
+      vm.runInContext("state.rate", context), 0.25);
+arrow("ArrowLeft", { ctrl: true });
+check("and stops there", vm.runInContext("state.rate", context), 0.25);
+check("the player follows", vm.runInContext("player.playbackRate", context), 0.25);
+check("changing speed never moves the playhead",
+      vm.runInContext("player.currentTime", context), 10);
 
 console.log("undo");
 setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);

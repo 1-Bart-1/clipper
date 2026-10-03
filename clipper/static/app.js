@@ -690,14 +690,27 @@ function onKey(event) {
     undo();
     return;
   }
+  if ((event.ctrlKey || event.metaKey)
+      && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+    event.preventDefault();
+    changeRate(event.key === "ArrowRight" ? 1 : -1);
+    return;
+  }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
   const item = currentItem();
   const video = item && item.kind === "video";
+  // Shift always means one frame: of the selected marker, or of the playhead.
   const sideways = (delta) => {
-    if (video && state.marker) moveMarker(event.shiftKey ? delta * frame()
-                                                         : delta * NUDGE_STEP);
-    else if (video) seek(delta * SEEK_STEP);
-    else step(delta);
+    if (!video) {
+      step(delta);
+    } else if (state.marker) {
+      moveMarker(delta * (event.shiftKey ? frame() : NUDGE_STEP));
+    } else if (event.shiftKey) {
+      player.pause();
+      seek(delta * frame());
+    } else {
+      seek(delta * SEEK_STEP);
+    }
   };
   const actions = {
     j: () => step(1),
@@ -774,6 +787,15 @@ function setRate(rate) {
   state.rate = rate;
   player.playbackRate = rate;
   renderRates();
+}
+
+/** Step through the speeds, slower to the left and faster to the right. */
+function changeRate(direction) {
+  const at = RATES.indexOf(state.rate);
+  const from = at < 0 ? RATES.indexOf(1) : at;
+  const next = Math.min(Math.max(from + direction, 0), RATES.length - 1);
+  setRate(RATES[next]);
+  toast(`${RATES[next]}×`);
 }
 
 function renderRates() {
