@@ -158,6 +158,21 @@ vm.runInContext("selectClip(0); state.marker = 'start'; moveMarker(2)", context)
 check("and the same holds once the first clip is picked up",
       ranges(), [[2, 10], [20, 31]]);
 
+console.log("deleting a clip");
+setUp([{ start: 0, end: 10, name: "one", saved: false, untouched: false },
+       { start: 20, end: 30, name: "two", saved: false, untouched: false }]);
+vm.runInContext("selectClip(1); deleteClip()", context);
+check("the selected clip goes", ranges(), [[0, 10]]);
+check("the clip before it takes over", vm.runInContext("state.active", context), 0);
+vm.runInContext("deleteClip()", context);
+check("the last clip is never dropped", ranges(), [[0, 10]]);
+vm.runInContext("undo()", context);
+check("ctrl+z brings a deleted clip back", ranges(), [[0, 10], [20, 30]]);
+setUp([{ start: 0, end: 10, name: "kept", saved: true },
+       { start: 20, end: 30, name: "", saved: false, untouched: false }]);
+vm.runInContext("selectClip(0); deleteClip()", context);
+check("a saved clip is not dropped from the bar", ranges(), [[0, 10], [20, 30]]);
+
 console.log("undo");
 setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
 vm.runInContext("state.history = []; addClip(); markIn()", context);

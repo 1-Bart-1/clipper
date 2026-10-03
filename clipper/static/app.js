@@ -371,6 +371,27 @@ function addClip() {
   playActiveClip();
 }
 
+function deleteClip() {
+  const clip = activeClip();
+  if (!clip) return;
+  if (state.clips.length <= 1) {
+    toast("a video keeps at least one clip", true);
+    return;
+  }
+  if (clip.saved) {
+    toast("that clip is already saved — it lives in filtered/", true);
+    return;
+  }
+  remember();
+  state.clips.splice(state.active, 1);
+  state.active = Math.max(0, state.active - 1);
+  state.marker = null;
+  nameBox.value = activeClip().name;
+  drawTimeline();
+  updateSaveButton();
+  playActiveClip();
+}
+
 function playActiveClip() {
   const clip = activeClip();
   if (!clip || clip.start === null || !player.duration) return;
@@ -693,6 +714,7 @@ function onKey(event) {
     i: markIn,
     o: markOut,
     a: () => { if (video) addClip(); },
+    Delete: () => { if (video) deleteClip(); },
     x: clearMarks,
     l: toggleLoop,
     f: toggleFullscreen,
