@@ -137,6 +137,18 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     library = None
 
+    def handle(self):
+        """Serve one connection.
+
+        A player that seeks, or a page that moves to the next file, drops the
+        connection mid-stream. That is ordinary, so it must not land a stack
+        trace in the console.
+        """
+        try:
+            super().handle()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def log_message(self, template, *args):
         """Keep the console to warnings; every request is otherwise noise."""
 

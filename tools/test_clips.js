@@ -13,10 +13,11 @@ function stub() {
     replaceChildren() { this.children = []; },
     append(...kids) { this.children.push(...kids); },
     setAttribute() {}, removeAttribute() {}, addEventListener() {},
+    toggleAttribute() {},
     removeEventListener() {}, focus() {}, blur() {}, scrollIntoView() {},
     showModal() {}, pause() {}, play: () => Promise.resolve(),
     matches: () => false, closest: () => null,
-    getBoundingClientRect: () => ({ left: 0, width: 1000 }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 500 }),
   };
   return node;
 }
@@ -138,5 +139,21 @@ setUp([{ start: 2, end: 60, name: "", saved: false }]);
 vm.runInContext("player.currentTime = 60; state.looping = true; onEnded()", context);
 check("a clip ending with the video restarts at its in point",
       vm.runInContext("player.currentTime", context), 2);
+
+console.log("picture zoom");
+setUp([]);
+vm.runInContext("resetMediaZoom(); zoomMedia(2, 500, 250)", context);
+check("the point under the cursor stays under the cursor",
+      vm.runInContext("[state.media.scale, state.media.x, state.media.y]", context),
+      [2, -500, -250]);
+vm.runInContext("panMedia(30, -10)", context);
+check("panning shifts the picture",
+      vm.runInContext("[state.media.x, state.media.y]", context), [-470, -260]);
+vm.runInContext("zoomMedia(0.01, 500, 250)", context);
+check("zooming back out recentres and stops at 1×",
+      vm.runInContext("[state.media.scale, state.media.x, state.media.y]", context),
+      [1, 0, 0]);
+vm.runInContext("zoomMedia(100, 0, 0); zoomMedia(100, 0, 0)", context);
+check("zoom is capped", vm.runInContext("state.media.scale", context), 20);
 
 process.exit(failures ? 1 : 0);

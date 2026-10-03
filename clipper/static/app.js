@@ -22,7 +22,58 @@ const state = {
   zoom: 1,
   offset: 0,
   history: [],
+  media: { scale: 1, x: 0, y: 0 },
 };
+
+const MAX_MEDIA_ZOOM = 20;
+
+function shownMedia() {
+  const item = currentItem();
+  return item && item.kind === "photo" ? photo : player;
+}
+
+/** The media's box as it would sit with no zoom applied. */
+function restingBox(node) {
+  const applied = node.style.transform;
+  node.style.transform = "none";
+  const box = node.getBoundingClientRect();
+  node.style.transform = applied;
+  return box;
+}
+
+function applyMediaZoom() {
+  const { scale, x, y } = state.media;
+  shownMedia().style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  element("screen").toggleAttribute("data-zoomed", scale > 1);
+}
+
+function resetMediaZoom() {
+  state.media = { scale: 1, x: 0, y: 0 };
+  player.style.transform = "";
+  photo.style.transform = "";
+  element("screen").removeAttribute("data-zoomed");
+}
+
+/** Zoom the picture about the cursor, the way a map does. */
+function zoomMedia(factor, clientX, clientY) {
+  const box = restingBox(shownMedia());
+  const scale = Math.min(Math.max(state.media.scale * factor, 1), MAX_MEDIA_ZOOM);
+  const held = {
+    x: (clientX - box.left - state.media.x) / state.media.scale,
+    y: (clientY - box.top - state.media.y) / state.media.scale,
+  };
+  state.media.scale = scale;
+  state.media.x = scale === 1 ? 0 : clientX - box.left - held.x * scale;
+  state.media.y = scale === 1 ? 0 : clientY - box.top - held.y * scale;
+  applyMediaZoom();
+}
+
+function panMedia(dx, dy) {
+  if (state.media.scale === 1) return;
+  state.media.x += dx;
+  state.media.y += dy;
+  applyMediaZoom();
+}
 
 /** Snapshot the clips so ctrl+z can put them back. */
 function remember() {
@@ -220,6 +271,7 @@ function select(index) {
   state.zoom = 1;
   state.offset = 0;
   state.history = [];
+  resetMediaZoom();
   state.clips = item.saves.map((save) => ({
     start: save.start ?? null, end: save.end ?? null, name: save.name, saved: true,
   }));
@@ -377,7 +429,6 @@ function drawTimeline() {
       handle.className = "handle";
       handle.style.left = `${acrossBar(clip[edge]) * 100}%`;
       handle.dataset.edge = edge;
-      handle.dataset.label = edge === "start" ? "IN" : "OUT";
       if (state.marker === edge) handle.dataset.selected = "1";
       handle.onpointerdown = (event) => startDrag(event, edge);
       bands.append(handle);
@@ -634,6 +685,7 @@ function onKey(event) {
     f: toggleFullscreen,
     n: () => nameBox.focus(),
     Escape: () => { state.marker = null; drawTimeline(); },
+    0: resetMediaZoom,
     1: () => setRate(RATES[0]),
     2: () => setRate(RATES[1]),
     3: () => setRate(RATES[2]),
@@ -709,6 +761,27 @@ function wire() {
   press("loop-button", toggleLoop);
   press("fullscreen-button", toggleFullscreen);
   element("screen").ondblclick = toggleFullscreen;
+  element("screen").addEventListener("wheel", (event) => {
+    event.preventDefault();
+    zoomMedia(event.deltaY < 0 ? 1.2 : 1 / 1.2, event.clientX, event.clientY);
+  }, { passive: false });
+  element("screen").onpointerdown = (event) => {
+    if (state.media.scale === 1) return;
+    event.preventDefault();
+    element("screen").setAttribute("data-panning", "1");
+    let last = { x: event.clientX, y: event.clientY };
+    const move = (moved) => {
+      panMedia(moved.clientX - last.x, moved.clientY - last.y);
+      last = { x: moved.clientX, y: moved.clientY };
+    };
+    const release = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+      element("screen").removeAttribute("data-panning");
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+  };
   element("track").addEventListener("wheel", (event) => {
     event.preventDefault();
     zoomBy(event.deltaY < 0 ? 1.25 : 1 / 1.25, barFraction(event));
