@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python compiles
+        run: python -m compileall -q clipper
+      - name: JavaScript parses
+        run: node --check clipper/static/app.js
+      - name: Every id the page script reaches for exists in the markup
+        run: python tools/check_page.py
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+            separator: ":"
+          - os: macos-latest
+            label: macos
+            separator: ":"
+          - os: windows-latest
+            label: windows
+            separator: ";"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyinstaller
+      - name: Bundle a single executable
+        run: >
+          pyinstaller --onefile --noconsole --name clipper
+          --add-data "clipper/static${{ matrix.separator }}clipper/static"
+          main.py
+      - name: Collect the download
+        shell: bash
+        run: |
+          mkdir -p download
+          cp README.md LICENSE download/
+          cp dist/clipper dist/clipper.exe download/ 2>/dev/null || true
+          ls -la download
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipper-${{ matrix.label }}
+          path: download/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+      - name: Zip one download per platform
+        run: |
+          cd downloads
+          for folder in */; do (cd "$folder" && zip -r "../${folder%/}.zip" .); done
+          ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: downloads/*.zip
+          generate_release_notes: true

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Clipper
+GenericName=Clip picker
+Comment=Review a day's photos and video and keep the good bits
+Exec=clipper
+Icon=@ICON@
+Terminal=false
+Categories=AudioVideo;Video;Photography;
+Keywords=video;clip;cut;photo;ffmpeg;
+StartupNotify=true

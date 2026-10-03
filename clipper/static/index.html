@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipper</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <strong class="brand">Clipper</strong>
+  <nav id="days"></nav>
+  <span class="spacer"></span>
+  <label class="toggle"><input type="checkbox" id="hide-saved"> hide saved</label>
+  <span id="count" class="count"></span>
+  <button id="help-button" class="ghost" title="keyboard shortcuts">?</button>
+</header>
+
+<main>
+  <section id="stage">
+    <div id="screen">
+      <video id="player" playsinline></video>
+      <img id="photo" alt="">
+      <div id="notice" hidden><span class="spinner"></span><span id="notice-text"></span></div>
+      <div id="toast" hidden></div>
+    </div>
+
+    <div id="timeline" hidden>
+      <div id="track">
+        <div id="bands"></div>
+        <div id="played"></div>
+      </div>
+      <div class="times">
+        <span id="clock">0:00.000</span>
+        <span id="selected"></span>
+        <span class="spacer"></span>
+        <span id="rates" class="rates"></span>
+        <button id="in-button" class="ghost" title="mark in (i)">in</button>
+        <button id="out-button" class="ghost" title="mark out (o)">out</button>
+        <button id="clear-button" class="ghost" title="clear this clip's marks (x)">clear</button>
+        <button id="loop-button" class="ghost" title="loop this clip (l)">loop</button>
+        <button id="fullscreen-button" class="ghost" title="fullscreen (f)">⛶</button>
+      </div>
+      <div id="clips"></div>
+    </div>
+
+    <form id="save-bar" autocomplete="off">
+      <span id="title" class="title"></span>
+      <input id="name" placeholder="name this keeper to save it…" spellcheck="false">
+      <button id="save-button" type="submit" disabled>Save</button>
+    </form>
+  </section>
+
+  <aside id="filmstrip"></aside>
+</main>
+
+<dialog id="help">
+  <h2>Keys</h2>
+  <dl>
+    <dt>j / k</dt><dd>next / previous file</dd>
+    <dt>space</dt><dd>play or pause</dd>
+    <dt>← / →</dt><dd>seek 2 s — or move the selected marker 1 s</dd>
+    <dt>shift + ← / →</dt><dd>move the selected marker one frame</dd>
+    <dt>, / .</dt><dd>step the playhead one frame</dd>
+    <dt>1 … 4</dt><dd>speed: 0.25× slomo, 0.5×, 1×, 2×</dd>
+    <dt>i / o</dt><dd>mark in / out of the active clip</dd>
+    <dt>a</dt><dd>add another clip to this video</dd>
+    <dt>x</dt><dd>clear the active clip's marks</dd>
+    <dt>l</dt><dd>loop the active clip</dd>
+    <dt>f</dt><dd>fullscreen</dd>
+    <dt>n / enter</dt><dd>name box / save</dd>
+  </dl>
+  <p class="fineprint">Click a marker to select it, then nudge it with the arrows. Cuts are
+  stream-copied, so a clip can start up to one keyframe (~2 s) before the in point.
+  Originals are never touched.</p>
+  <button onclick="this.closest('dialog').close()">got it</button>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

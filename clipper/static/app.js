@@ -1,0 +1,607 @@
+"use strict";
+
+const SEEK_STEP = 2;
+const NUDGE_STEP = 1;
+const RATES = [0.25, 0.5, 1, 2];
+
+const state = {
+  items: [],
+  days: [],
+  day: null,
+  visible: [],
+  current: -1,
+  clips: [],
+  active: -1,
+  marker: null,
+  looping: false,
+  generation: 0,
+  rate: 1,
+};
+
+const element = (id) => document.getElementById(id);
+const player = element("player");
+const photo = element("photo");
+const nameBox = element("name");
+
+function stamp(seconds) {
+  if (seconds === null || Number.isNaN(seconds)) return "–";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds % 60).toFixed(3).padStart(6, "0")}`;
+}
+
+function short(seconds) {
+  if (seconds === null) return "–";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${(seconds % 60).toFixed(1).padStart(4, "0")}`;
+}
+
+function currentItem() {
+  return state.visible[state.current] || null;
+}
+
+function activeClip() {
+  return state.clips[state.active] || null;
+}
+
+function frame() {
+  const item = currentItem();
+  return item && item.fps ? 1 / item.fps : 0.04;
+}
+
+async function getJSON(url, options) {
+  const answer = await fetch(url, options);
+  return { ok: answer.ok, body: await answer.json() };
+}
+
+function toast(message, bad) {
+  const box = element("toast");
+  box.textContent = message;
+  box.hidden = false;
+  if (bad) box.dataset.bad = "1"; else delete box.dataset.bad;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { box.hidden = true; }, 3200);
+}
+
+function notice(message) {
+  element("notice").hidden = !message;
+  element("notice-text").textContent = message || "";
+}
+
+async function load() {
+  const { body } = await getJSON("/api/library");
+  state.items = body.items;
+  state.days = body.days;
+  state.day = state.days[0] || null;
+  applyFilter(0);
+}
+
+function renderDays() {
+  const nav = element("days");
+  nav.replaceChildren();
+  for (const day of state.days) {
+    const button = document.createElement("button");
+    button.textContent = day;
+    button.setAttribute("aria-current", String(day === state.day));
+    button.onclick = () => { state.day = day; applyFilter(0); };
+    nav.append(button);
+  }
+}
+
+function applyFilter(startAt) {
+  const hideSaved = element("hide-saved").checked;
+  state.visible = state.items.filter((item) =>
+    item.day === state.day && !(hideSaved && item.saves.length));
+  renderDays();
+  renderStrip();
+  const clips = state.visible.reduce((total, item) => total + item.saves.length, 0);
+  element("count").textContent = `${state.visible.length} files · ${clips} keepers`;
+  select(Math.min(startAt, state.visible.length - 1));
+}
+
+function renderStrip() {
+  const strip = element("filmstrip");
+  strip.replaceChildren();
+  state.visible.forEach((item, index) => {
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.dataset.index = String(index);
+    const thumb = document.createElement("img");
+    thumb.loading = "lazy";
+    thumb.src = `/api/thumb?f=${encodeURIComponent(item.relpath)}`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const clock = item.captured.slice(11, 16);
+    const length = item.kind === "video" ? `${item.duration.toFixed(0)}s` : "photo";
+    meta.innerHTML =
+      `<span class="name">${item.label}</span>` +
+      `<span class="sub">${clock} · ${length}</span>`;
+    if (item.saves.length) {
+      const kept = document.createElement("span");
+      kept.className = "kept";
+      const count = item.saves.length;
+      kept.textContent = `✓ ${count} clip${count > 1 ? "s" : ""}: ` +
+        item.saves.map((save) => save.name).join(", ");
+      meta.append(kept);
+    }
+    tile.append(thumb, meta);
+    tile.onclick = () => select(index);
+    strip.append(tile);
+  });
+  highlightTile();
+}
+
+function highlightTile() {
+  for (const tile of document.querySelectorAll(".tile")) {
+    const active = Number(tile.dataset.index) === state.current;
+    tile.setAttribute("aria-current", String(active));
+    if (active) tile.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function select(index) {
+  state.generation += 1;
+  if (!state.visible.length) {
+    state.current = -1;
+    player.removeAttribute("data-live");
+    photo.removeAttribute("data-live");
+    element("title").textContent = "nothing to show";
+    element("timeline").hidden = true;
+    return;
+  }
+  state.current = Math.max(0, Math.min(index, state.visible.length - 1));
+  const item = currentItem();
+  state.clips = item.saves.map((save) => ({
+    start: save.start ?? null, end: save.end ?? null, name: save.name, saved: true,
+  }));
+  state.active = -1;
+  state.marker = null;
+  state.looping = false;
+  nameBox.value = "";
+  element("title").textContent = `${item.label} · ${item.day}`;
+  highlightTile();
+  if (item.kind === "video") {
+    addClip();
+    showVideo(item, state.generation);
+  } else {
+    showPhoto(item);
+  }
+  updateSaveButton();
+}
+
+function showPhoto(item) {
+  player.pause();
+  player.removeAttribute("src");
+  player.removeAttribute("data-live");
+  element("timeline").hidden = true;
+  notice("");
+  photo.src = `/api/photo?f=${encodeURIComponent(item.relpath)}`;
+  photo.dataset.live = "1";
+}
+
+async function showVideo(item, token) {
+  photo.removeAttribute("data-live");
+  photo.removeAttribute("src");
+  element("timeline").hidden = false;
+  player.removeAttribute("data-live");
+  player.poster = `/api/thumb?f=${encodeURIComponent(item.relpath)}`;
+  notice("preparing a playable proxy…");
+  const outcome = await waitForProxy(item.relpath, token);
+  if (state.generation !== token) return;
+  if (outcome.state !== "ready") {
+    notice(outcome.error || `ffmpeg could not prepare ${item.label}`);
+    return;
+  }
+  notice("");
+  player.src = `/api/video?f=${encodeURIComponent(item.relpath)}`;
+  player.dataset.live = "1";
+  player.playbackRate = state.rate;
+  player.play().catch(() => notice("press space to play"));
+  prefetchNeighbours();
+}
+
+async function waitForProxy(relpath, token) {
+  const url = `/api/prepare?f=${encodeURIComponent(relpath)}`;
+  let { body } = await getJSON(url);
+  while ((body.state === "queued" || body.state === "working")
+         && state.generation === token) {
+    await new Promise((done) => setTimeout(done, 600));
+    ({ body } = await getJSON(url));
+  }
+  return body;
+}
+
+function prefetchNeighbours() {
+  state.visible.slice(state.current + 1, state.current + 4)
+    .filter((item) => item.kind === "video")
+    .forEach((item) => {
+      fetch(`/api/prepare?f=${encodeURIComponent(item.relpath)}&urgent=0`)
+        .catch(() => undefined);
+    });
+}
+
+function addClip() {
+  if (state.clips.some((clip) => !clip.saved && clip.start === null)) {
+    state.active = state.clips.findIndex((clip) => !clip.saved && clip.start === null);
+  } else {
+    state.clips.push({ start: null, end: null, name: "", saved: false });
+    state.active = state.clips.length - 1;
+  }
+  state.marker = null;
+  nameBox.value = activeClip().name;
+  drawTimeline();
+  updateSaveButton();
+}
+
+function selectClip(index) {
+  state.active = index;
+  state.marker = null;
+  nameBox.value = state.clips[index].name;
+  drawTimeline();
+  updateSaveButton();
+  const clip = activeClip();
+  if (clip.start !== null && player.duration) player.currentTime = clip.start;
+}
+
+function drawTimeline() {
+  const span = player.duration || currentItem()?.duration || 0;
+  const bands = element("bands");
+  bands.replaceChildren();
+  state.clips.forEach((clip, index) => {
+    if (clip.start === null || !span) return;
+    const end = clip.end === null ? clip.start : clip.end;
+    const band = document.createElement("div");
+    band.className = "band";
+    band.style.left = `${(clip.start / span) * 100}%`;
+    band.style.width = `${Math.max(((end - clip.start) / span) * 100, 0.4)}%`;
+    if (clip.saved) band.dataset.saved = "1";
+    if (index === state.active) band.dataset.active = "1";
+    if (clip.name) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = clip.name;
+      band.append(tag);
+    }
+    bands.append(band);
+  });
+  const clip = activeClip();
+  if (clip && !clip.saved && span) {
+    for (const edge of ["start", "end"]) {
+      if (clip[edge] === null) continue;
+      const handle = document.createElement("div");
+      handle.className = "handle";
+      handle.style.left = `${(clip[edge] / span) * 100}%`;
+      handle.dataset.edge = edge;
+      if (state.marker === edge) handle.dataset.selected = "1";
+      handle.onpointerdown = (event) => startDrag(event, edge);
+      bands.append(handle);
+    }
+  }
+  renderChips();
+  const summary = clip && clip.start !== null
+    ? (clip.end !== null
+        ? `in ${stamp(clip.start)} → out ${stamp(clip.end)} · ` +
+          `${(clip.end - clip.start).toFixed(1)}s`
+        : `in ${stamp(clip.start)}`)
+    : "";
+  element("selected").textContent =
+    summary + (state.marker ? `  ·  ${state.marker} marker selected` : "");
+}
+
+function renderChips() {
+  const row = element("clips");
+  row.replaceChildren();
+  state.clips.forEach((clip, index) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.setAttribute("aria-current", String(index === state.active));
+    if (clip.saved) chip.dataset.saved = "1";
+    const range = clip.start === null ? "new clip"
+      : `${short(clip.start)}–${clip.end === null ? "?" : short(clip.end)}`;
+    chip.textContent = `${index + 1}. ${clip.name || range}${clip.saved ? " ✓" : ""}`;
+    chip.onclick = () => { chip.blur(); selectClip(index); };
+    row.append(chip);
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "chip add";
+  add.textContent = "+ clip (a)";
+  add.onclick = () => { add.blur(); addClip(); };
+  row.append(add);
+}
+
+function editable() {
+  const clip = activeClip();
+  if (!clip) return null;
+  if (clip.saved) {
+    toast("that clip is already saved — press a for a new one", true);
+    return null;
+  }
+  return clip;
+}
+
+function markIn() {
+  const clip = editable();
+  if (!clip || !player.duration) return;
+  clip.start = player.currentTime;
+  if (clip.end !== null && clip.end <= clip.start) clip.end = null;
+  state.marker = "start";
+  drawTimeline();
+  updateSaveButton();
+}
+
+function markOut() {
+  const clip = editable();
+  if (!clip || !player.duration) return;
+  if (clip.start === null) { toast("mark the in point first (i)", true); return; }
+  if (player.currentTime <= clip.start) {
+    toast("the out point must come after the in point", true);
+    return;
+  }
+  clip.end = player.currentTime;
+  state.marker = "end";
+  drawTimeline();
+  updateSaveButton();
+}
+
+function clearMarks() {
+  const clip = editable();
+  if (!clip) return;
+  clip.start = null;
+  clip.end = null;
+  state.marker = null;
+  state.looping = false;
+  element("loop-button").setAttribute("aria-pressed", "false");
+  drawTimeline();
+  updateSaveButton();
+}
+
+function moveMarker(delta) {
+  const clip = editable();
+  if (!clip || !state.marker || clip[state.marker] === null) return;
+  const span = player.duration || 0;
+  const other = state.marker === "start" ? clip.end : clip.start;
+  let moved = clip[state.marker] + delta;
+  moved = Math.min(Math.max(moved, 0), span);
+  if (other !== null) {
+    moved = state.marker === "start"
+      ? Math.min(moved, other - frame())
+      : Math.max(moved, clip.start + frame());
+  }
+  clip[state.marker] = moved;
+  player.currentTime = moved;
+  drawTimeline();
+}
+
+function startDrag(event, edge) {
+  event.preventDefault();
+  event.stopPropagation();
+  const clip = editable();
+  if (!clip) return;
+  state.marker = edge;
+  const move = (moved) => {
+    const span = player.duration || 0;
+    const box = element("track").getBoundingClientRect();
+    const fraction = Math.min(Math.max((moved.clientX - box.left) / box.width, 0), 1);
+    let at = fraction * span;
+    const other = edge === "start" ? clip.end : clip.start;
+    if (other !== null) {
+      at = edge === "start" ? Math.min(at, other - frame())
+                            : Math.max(at, other + frame());
+    }
+    clip[edge] = at;
+    player.currentTime = at;
+    drawTimeline();
+  };
+  const release = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", release);
+    updateSaveButton();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", release);
+  move(event);
+}
+
+function saveable() {
+  const item = currentItem();
+  if (!item || !nameBox.value.trim()) return false;
+  if (item.kind === "photo") return !item.saves.length;
+  const clip = activeClip();
+  return Boolean(clip && !clip.saved && clip.start !== null && clip.end !== null);
+}
+
+function updateSaveButton() {
+  element("save-button").disabled = !saveable();
+  const clip = activeClip();
+  if (clip && !clip.saved) clip.name = nameBox.value.trim();
+}
+
+async function save(event) {
+  event.preventDefault();
+  if (!saveable()) return;
+  const item = currentItem();
+  const clip = activeClip();
+  const payload = { relpath: item.relpath, name: nameBox.value.trim() };
+  if (item.kind === "video") {
+    payload.start = clip.start;
+    payload.end = clip.end;
+  }
+  element("save-button").disabled = true;
+  const { ok, body } = await getJSON("/api/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!ok) {
+    toast(body.error || "save failed", true);
+    updateSaveButton();
+    return;
+  }
+  item.saves.push({ name: body.name, start: payload.start, end: payload.end });
+  toast(`saved ${body.saved}`);
+  renderStrip();
+  if (item.kind === "photo") {
+    step(1);
+    return;
+  }
+  clip.saved = true;
+  clip.name = body.name;
+  nameBox.value = "";
+  addClip();
+}
+
+function step(delta) {
+  select(state.current + delta);
+}
+
+function seek(delta) {
+  if (!player.duration) return;
+  player.currentTime = Math.min(Math.max(player.currentTime + delta, 0),
+                                player.duration);
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else element("screen").requestFullscreen().catch(() =>
+    toast("fullscreen refused", true));
+}
+
+function toggleLoop() {
+  const clip = activeClip();
+  if (!clip || clip.start === null || clip.end === null) {
+    toast("mark in and out first", true);
+    return;
+  }
+  state.looping = !state.looping;
+  element("loop-button").setAttribute("aria-pressed", String(state.looping));
+  if (state.looping) {
+    player.currentTime = clip.start;
+    player.play().catch(() => undefined);
+  }
+}
+
+function onKey(event) {
+  if (event.target.matches("input, textarea")) {
+    if (event.key === "Escape") event.target.blur();
+    return;
+  }
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+  const item = currentItem();
+  const video = item && item.kind === "video";
+  const sideways = (delta) => {
+    if (video && state.marker) moveMarker(event.shiftKey ? delta * frame()
+                                                         : delta * NUDGE_STEP);
+    else if (video) seek(delta * SEEK_STEP);
+    else step(delta);
+  };
+  const actions = {
+    j: () => step(1),
+    k: () => step(-1),
+    "]": () => step(1),
+    "[": () => step(-1),
+    ArrowRight: () => sideways(1),
+    ArrowLeft: () => sideways(-1),
+    ArrowDown: () => step(1),
+    ArrowUp: () => step(-1),
+    " ": () => { if (video) player.paused ? player.play() : player.pause(); },
+    ",": () => { player.pause(); seek(-frame()); },
+    ".": () => { player.pause(); seek(frame()); },
+    i: markIn,
+    o: markOut,
+    a: () => { if (video) addClip(); },
+    x: clearMarks,
+    l: toggleLoop,
+    f: toggleFullscreen,
+    n: () => nameBox.focus(),
+    Escape: () => { state.marker = null; drawTimeline(); },
+    1: () => setRate(RATES[0]),
+    2: () => setRate(RATES[1]),
+    3: () => setRate(RATES[2]),
+    4: () => setRate(RATES[3]),
+    "?": () => element("help").showModal(),
+  };
+  const action = actions[event.key];
+  if (!action) return;
+  event.preventDefault();
+  action();
+}
+
+function onTimeUpdate() {
+  const span = player.duration || 0;
+  element("clock").textContent = stamp(player.currentTime);
+  element("played").style.left = span ? `${(player.currentTime / span) * 100}%` : "0";
+  const clip = activeClip();
+  if (state.looping && clip && clip.end !== null && player.currentTime >= clip.end) {
+    player.currentTime = clip.start;
+  }
+}
+
+function scrub(event) {
+  const box = element("track").getBoundingClientRect();
+  const fraction = Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
+  if (player.duration) player.currentTime = fraction * player.duration;
+}
+
+function setRate(rate) {
+  state.rate = rate;
+  player.playbackRate = rate;
+  renderRates();
+}
+
+function renderRates() {
+  const row = element("rates");
+  row.replaceChildren();
+  for (const rate of RATES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${rate}×`;
+    button.setAttribute("aria-pressed", String(rate === state.rate));
+    button.onclick = () => { button.blur(); setRate(rate); };
+    row.append(button);
+  }
+}
+
+function press(id, action) {
+  element(id).onclick = (event) => {
+    event.currentTarget.blur();
+    action();
+  };
+}
+
+function wire() {
+  element("save-bar").onsubmit = save;
+  nameBox.oninput = updateSaveButton;
+  element("hide-saved").onchange = () => applyFilter(state.current);
+  element("help-button").onclick = () => element("help").showModal();
+  press("in-button", markIn);
+  press("out-button", markOut);
+  press("clear-button", clearMarks);
+  press("loop-button", toggleLoop);
+  press("fullscreen-button", toggleFullscreen);
+  element("screen").ondblclick = toggleFullscreen;
+  element("track").onpointerdown = (event) => {
+    if (event.target.classList.contains("handle")) return;
+    state.marker = null;
+    scrub(event);
+    const move = (moved) => scrub(moved);
+    const release = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", release);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", release);
+    drawTimeline();
+  };
+  player.ontimeupdate = onTimeUpdate;
+  player.onloadedmetadata = () => {
+    player.playbackRate = state.rate;
+    drawTimeline();
+  };
+  player.onended = () => { if (!state.looping) step(1); };
+  document.addEventListener("keydown", onKey);
+  renderRates();
+}
+
+wire();
+load();
