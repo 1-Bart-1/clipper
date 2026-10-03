@@ -21,6 +21,8 @@ jobs:
         run: node --check clipper/static/app.js
       - name: Every id the page script reaches for exists in the markup
         run: python tools/check_page.py
+      - name: Clip arithmetic behaves
+        run: node tools/test_clips.js
 
   build:
     needs: check

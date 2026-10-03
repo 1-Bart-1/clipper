@@ -31,4 +31,7 @@ run:
 	python3 -m $(APP) $(LIBRARY)
 
 check:
-	python3 -m compileall -q $(APP) && echo "syntax clean"
+	python3 -m compileall -q $(APP)
+	node --check $(APP)/static/app.js
+	python3 tools/check_page.py
+	node tools/test_clips.js

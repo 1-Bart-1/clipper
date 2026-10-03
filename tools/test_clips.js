@@ -1,0 +1,142 @@
+"use strict";
+// Exercises the viewer's clip arithmetic against a stubbed DOM, because the
+// behaviour of `a`, the loop and the zoom cannot be eyeballed from a diff.
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+function stub() {
+  const node = {
+    style: {}, dataset: {}, children: [], checked: false, value: "",
+    textContent: "", duration: 0, currentTime: 0, paused: false, playbackRate: 1,
+    classList: { contains: () => false, add() {}, remove() {} },
+    replaceChildren() { this.children = []; },
+    append(...kids) { this.children.push(...kids); },
+    setAttribute() {}, removeAttribute() {}, addEventListener() {},
+    removeEventListener() {}, focus() {}, blur() {}, scrollIntoView() {},
+    showModal() {}, pause() {}, play: () => Promise.resolve(),
+    matches: () => false, closest: () => null,
+    getBoundingClientRect: () => ({ left: 0, width: 1000 }),
+  };
+  return node;
+}
+
+const nodes = new Map();
+const context = {
+  console,
+  setTimeout, clearTimeout,
+  fetch: () => Promise.resolve({ ok: true, json: () => ({ items: [], days: [] }) }),
+  document: {
+    getElementById(id) {
+      if (!nodes.has(id)) nodes.set(id, stub());
+      return nodes.get(id);
+    },
+    createElement: stub,
+    querySelectorAll: () => [],
+    addEventListener() {},
+    fullscreenElement: null,
+  },
+  window: { addEventListener() {}, removeEventListener() {} },
+};
+context.globalThis = context;
+vm.createContext(context);
+vm.runInContext(fs.readFileSync(
+  path.join(__dirname, "..", "clipper", "static", "app.js"), "utf8"), context);
+
+let failures = 0;
+function check(what, got, wanted) {
+  const same = JSON.stringify(got) === JSON.stringify(wanted);
+  if (!same) {
+    failures += 1;
+    console.log(`  FAIL ${what}\n       got    ${JSON.stringify(got)}` +
+                `\n       wanted ${JSON.stringify(wanted)}`);
+  } else {
+    console.log(`  ok   ${what}`);
+  }
+}
+
+function setUp(clips, duration = 60) {
+  vm.runInContext(`
+    state.visible = [{relpath: "a.MOV", label: "a.MOV", kind: "video", day: "01-10",
+                      captured: "2026-10-01T12:00:00", duration: ${duration},
+                      fps: 25, size: 1, saves: []}];
+    state.current = 0;
+    state.clips = ${JSON.stringify(clips)};
+    state.active = ${clips.length ? 0 : -1};
+    state.zoom = 1; state.offset = 0; state.dragging = false;
+    player.duration = ${duration};
+  `, context);
+}
+
+const ranges = () => vm.runInContext(
+  "state.clips.map(c => [c.start, c.end])", context);
+
+console.log("add clip");
+setUp([]);
+vm.runInContext("addClip()", context);
+check("empty video gets one clip spanning the whole thing", ranges(), [[0, 60]]);
+
+setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
+vm.runInContext("addClip()", context);
+check("whole video splits into halves", ranges(), [[0, 30], [30, 60]]);
+check("the new half is active", vm.runInContext("state.active", context), 1);
+
+setUp([{ start: 0, end: 10, name: "", saved: false, untouched: false }]);
+vm.runInContext("addClip()", context);
+check("a trimmed first clip is left alone", ranges(), [[0, 10], [10, 60]]);
+check("the new clip is active", vm.runInContext("state.active", context), 1);
+
+setUp([{ start: 0, end: 10, name: "one", saved: true },
+       { start: 10, end: 25, name: "", saved: false, untouched: false }]);
+vm.runInContext("addClip()", context);
+check("the gap after the last clip is taken", ranges(), [[0, 10], [10, 25], [25, 60]]);
+
+setUp([{ start: 0, end: 60, name: "all", saved: true }]);
+vm.runInContext("addClip()", context);
+check("a saved clip covering everything is never cut up", ranges(), [[0, 60]]);
+
+console.log("loop");
+setUp([{ start: 5, end: 10, name: "", saved: false }]);
+vm.runInContext("player.currentTime = 10.5; onTimeUpdate()", context);
+check("playing past the out point returns to the in point",
+      vm.runInContext("player.currentTime", context), 5);
+vm.runInContext("state.dragging = true; player.currentTime = 10.5; onTimeUpdate()",
+                context);
+check("dragging a handle does not trigger the loop",
+      vm.runInContext("player.currentTime", context), 10.5);
+check("looping is on by default", vm.runInContext("state.looping", context), true);
+
+console.log("zoom");
+setUp([]);
+vm.runInContext("zoomBy(2, 0.5)", context);
+check("zooming halves the window", vm.runInContext("view().width", context), 30);
+check("the anchored time stays put",
+      Math.round(vm.runInContext("atFraction(0.5)", context) * 1000) / 1000, 30);
+check("the window is centred on the anchor",
+      vm.runInContext("view().start", context), 15);
+vm.runInContext("zoomBy(0.001, 0.5)", context);
+check("zooming out stops at the whole video",
+      [vm.runInContext("state.zoom", context), vm.runInContext("view().start", context)],
+      [1, 0]);
+vm.runInContext("state.zoom = 4; state.offset = 0; player.currentTime = 50; onTimeUpdate()",
+                context);
+check("the playhead is followed when it leaves the window",
+      vm.runInContext("view().start", context), 42.5);
+
+console.log("undo");
+setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
+vm.runInContext("state.history = []; addClip(); markIn()", context);
+check("two edits leave two snapshots",
+      vm.runInContext("state.history.length", context), 2);
+vm.runInContext("undo(); undo()", context);
+check("undo walks back to the whole video", ranges(), [[0, 60]]);
+check("undoing past the start is refused",
+      vm.runInContext("undo(); state.clips.length", context), 1);
+
+console.log("loop at the end of the file");
+setUp([{ start: 2, end: 60, name: "", saved: false }]);
+vm.runInContext("player.currentTime = 60; state.looping = true; onEnded()", context);
+check("a clip ending with the video restarts at its in point",
+      vm.runInContext("player.currentTime", context), 2);
+
+process.exit(failures ? 1 : 0);

@@ -3,6 +3,8 @@
 const SEEK_STEP = 2;
 const NUDGE_STEP = 1;
 const RATES = [0.25, 0.5, 1, 2];
+const MIN_CLIP = 0.5;
+const MAX_ZOOM = 200;
 
 const state = {
   items: [],
@@ -13,10 +15,75 @@ const state = {
   clips: [],
   active: -1,
   marker: null,
-  looping: false,
+  looping: true,
+  dragging: false,
   generation: 0,
   rate: 1,
+  zoom: 1,
+  offset: 0,
+  history: [],
 };
+
+/** Snapshot the clips so ctrl+z can put them back. */
+function remember() {
+  state.history.push(JSON.stringify({ clips: state.clips, active: state.active }));
+  if (state.history.length > 50) state.history.shift();
+}
+
+function undo() {
+  const previous = state.history.pop();
+  if (!previous) {
+    toast("nothing to undo", true);
+    return;
+  }
+  const restored = JSON.parse(previous);
+  state.clips = restored.clips;
+  state.active = restored.active;
+  state.marker = null;
+  nameBox.value = activeClip()?.name ?? "";
+  drawTimeline();
+  updateSaveButton();
+  playActiveClip();
+}
+
+/** The stretch of the video the bar currently shows, in seconds. */
+function view() {
+  const span = player.duration || currentItem()?.duration || 0;
+  const width = span / state.zoom;
+  const start = Math.min(Math.max(state.offset, 0), Math.max(span - width, 0));
+  return { span, start, width: width || 1 };
+}
+
+/** Where `time` sits across the bar, 0 at its left edge and 1 at its right. */
+function acrossBar(time) {
+  const window = view();
+  return (time - window.start) / window.width;
+}
+
+/** The time at `fraction` of the way across the bar. */
+function atFraction(fraction) {
+  const window = view();
+  return window.start + fraction * window.width;
+}
+
+function zoomBy(factor, anchor) {
+  const span = view().span;
+  if (!span) return;
+  const held = atFraction(anchor);
+  state.zoom = Math.min(Math.max(state.zoom * factor, 1), MAX_ZOOM);
+  state.offset = held - (span / state.zoom) * anchor;
+  drawTimeline();
+}
+
+function keepPlayheadInView() {
+  if (state.zoom === 1) return;
+  const window = view();
+  const at = player.currentTime;
+  if (at < window.start || at > window.start + window.width) {
+    state.offset = at - window.width / 2;
+    drawTimeline();
+  }
+}
 
 const element = (id) => document.getElementById(id);
 const player = element("player");
@@ -150,12 +217,14 @@ function select(index) {
   }
   state.current = Math.max(0, Math.min(index, state.visible.length - 1));
   const item = currentItem();
+  state.zoom = 1;
+  state.offset = 0;
+  state.history = [];
   state.clips = item.saves.map((save) => ({
     start: save.start ?? null, end: save.end ?? null, name: save.name, saved: true,
   }));
   state.active = -1;
   state.marker = null;
-  state.looping = false;
   nameBox.value = "";
   element("title").textContent = `${item.label} · ${item.day}`;
   highlightTile();
@@ -225,17 +294,48 @@ function wholeVideo() {
 }
 
 function addClip() {
-  const fresh = state.clips.findIndex((clip) => !clip.saved && clip.untouched);
-  if (fresh >= 0) {
-    state.active = fresh;
-  } else {
+  remember();
+  const span = player.duration || currentItem()?.duration || 0;
+  const ends = state.clips.map((clip) => clip.end ?? clip.start ?? 0);
+  const lastEnd = ends.length ? Math.max(...ends) : 0;
+  if (!state.clips.length || !span) {
     state.clips.push(wholeVideo());
     state.active = state.clips.length - 1;
+  } else if (span - lastEnd >= MIN_CLIP) {
+    state.clips.push({ start: lastEnd, end: span, name: "", saved: false });
+    state.active = state.clips.length - 1;
+  } else if (!splitLastClip()) {
+    return;
   }
   state.marker = null;
   nameBox.value = activeClip().name;
   drawTimeline();
   updateSaveButton();
+  playActiveClip();
+}
+
+function playActiveClip() {
+  const clip = activeClip();
+  if (!clip || clip.start === null || !player.duration) return;
+  player.currentTime = clip.start;
+  player.play().catch(() => undefined);
+}
+
+function splitLastClip() {
+  const index = state.clips.reduce((found, clip, at) =>
+    !clip.saved && (clip.end ?? 0) - (clip.start ?? 0) >= MIN_CLIP * 2 ? at : found, -1);
+  if (index < 0) {
+    toast("no room for another clip — drag a handle in first", true);
+    return false;
+  }
+  const clip = state.clips[index];
+  const middle = (clip.start + clip.end) / 2;
+  state.clips.splice(index + 1, 0,
+                     { start: middle, end: clip.end, name: "", saved: false });
+  clip.end = middle;
+  clip.untouched = false;
+  state.active = index + 1;
+  return true;
 }
 
 function selectClip(index) {
@@ -244,12 +344,12 @@ function selectClip(index) {
   nameBox.value = state.clips[index].name;
   drawTimeline();
   updateSaveButton();
-  const clip = activeClip();
-  if (clip.start !== null && player.duration) player.currentTime = clip.start;
+  playActiveClip();
 }
 
 function drawTimeline() {
-  const span = player.duration || currentItem()?.duration || 0;
+  const window = view();
+  const span = window.span;
   const bands = element("bands");
   bands.replaceChildren();
   state.clips.forEach((clip, index) => {
@@ -257,8 +357,8 @@ function drawTimeline() {
     const end = clip.end === null ? clip.start : clip.end;
     const band = document.createElement("div");
     band.className = "band";
-    band.style.left = `${(clip.start / span) * 100}%`;
-    band.style.width = `${Math.max(((end - clip.start) / span) * 100, 0.4)}%`;
+    band.style.left = `${acrossBar(clip.start) * 100}%`;
+    band.style.width = `${Math.max(((end - clip.start) / window.width) * 100, 0.4)}%`;
     if (clip.saved) band.dataset.saved = "1";
     if (index === state.active) band.dataset.active = "1";
     if (clip.name) {
@@ -275,7 +375,7 @@ function drawTimeline() {
       if (clip[edge] === null) continue;
       const handle = document.createElement("div");
       handle.className = "handle";
-      handle.style.left = `${(clip[edge] / span) * 100}%`;
+      handle.style.left = `${acrossBar(clip[edge]) * 100}%`;
       handle.dataset.edge = edge;
       handle.dataset.label = edge === "start" ? "IN" : "OUT";
       if (state.marker === edge) handle.dataset.selected = "1";
@@ -284,6 +384,7 @@ function drawTimeline() {
     }
   }
   renderChips();
+  element("loop-button").setAttribute("aria-pressed", String(state.looping));
   const summary = clip && clip.start !== null
     ? (clip.end !== null
         ? `in ${stamp(clip.start)} → out ${stamp(clip.end)} · ` +
@@ -292,11 +393,12 @@ function drawTimeline() {
     : "";
   element("selected").textContent =
     summary + (state.marker ? `  ·  ${state.marker === "start" ? "IN" : "OUT"} selected` : "");
-  element("hint").textContent = clip && !clip.saved
+  const zoomed = state.zoom > 1 ? `  ·  zoom ${state.zoom.toFixed(1)}×` : "";
+  element("hint").textContent = (clip && !clip.saved
     ? (clip.untouched ? "drag the IN and OUT handles, or press i / o at the playhead"
                       : (state.marker ? "arrows move it 1 s · shift+arrows one frame"
                                       : "click a handle to nudge it with the arrows"))
-    : "";
+    : "") + zoomed;
 }
 
 function renderChips() {
@@ -333,6 +435,7 @@ function editable() {
 }
 
 function markIn() {
+  remember();
   const clip = editable();
   if (!clip || !player.duration) return;
   clip.start = player.currentTime;
@@ -344,6 +447,7 @@ function markIn() {
 }
 
 function markOut() {
+  remember();
   const clip = editable();
   if (!clip || !player.duration) return;
   if (clip.start === null) { toast("mark the in point first (i)", true); return; }
@@ -359,6 +463,7 @@ function markOut() {
 }
 
 function clearMarks() {
+  remember();
   const clip = editable();
   if (!clip) return;
   Object.assign(clip, wholeVideo(), { name: clip.name });
@@ -370,6 +475,7 @@ function clearMarks() {
 }
 
 function moveMarker(delta) {
+  remember();
   const clip = editable();
   if (!clip || !state.marker || clip[state.marker] === null) return;
   const span = player.duration || 0;
@@ -392,12 +498,11 @@ function startDrag(event, edge) {
   event.stopPropagation();
   const clip = editable();
   if (!clip) return;
+  remember();
   state.marker = edge;
+  state.dragging = true;
   const move = (moved) => {
-    const span = player.duration || 0;
-    const box = element("track").getBoundingClientRect();
-    const fraction = Math.min(Math.max((moved.clientX - box.left) / box.width, 0), 1);
-    let at = fraction * span;
+    let at = atFraction(barFraction(moved));
     const other = edge === "start" ? clip.end : clip.start;
     if (other !== null) {
       at = edge === "start" ? Math.min(at, other - frame())
@@ -411,7 +516,9 @@ function startDrag(event, edge) {
   const release = () => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
+    state.dragging = false;
     updateSaveButton();
+    playActiveClip();
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", release);
@@ -483,22 +590,19 @@ function toggleFullscreen() {
 }
 
 function toggleLoop() {
-  const clip = activeClip();
-  if (!clip || clip.start === null || clip.end === null) {
-    toast("mark in and out first", true);
-    return;
-  }
   state.looping = !state.looping;
   element("loop-button").setAttribute("aria-pressed", String(state.looping));
-  if (state.looping) {
-    player.currentTime = clip.start;
-    player.play().catch(() => undefined);
-  }
+  if (state.looping) playActiveClip();
 }
 
 function onKey(event) {
   if (event.target.matches("input, textarea")) {
     if (event.key === "Escape") event.target.blur();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    undo();
     return;
   }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -542,20 +646,30 @@ function onKey(event) {
   action();
 }
 
+function onEnded() {
+  if (state.looping) playActiveClip();
+  else step(1);
+}
+
 function onTimeUpdate() {
   const span = player.duration || 0;
   element("clock").textContent = stamp(player.currentTime);
-  element("played").style.left = span ? `${(player.currentTime / span) * 100}%` : "0";
+  element("played").style.left = span ? `${acrossBar(player.currentTime) * 100}%` : "0";
+  keepPlayheadInView();
   const clip = activeClip();
-  if (state.looping && clip && clip.end !== null && player.currentTime >= clip.end) {
+  if (state.looping && !state.dragging && clip && clip.end !== null
+      && player.currentTime >= clip.end) {
     player.currentTime = clip.start;
   }
 }
 
-function scrub(event) {
+function barFraction(event) {
   const box = element("track").getBoundingClientRect();
-  const fraction = Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
-  if (player.duration) player.currentTime = fraction * player.duration;
+  return Math.min(Math.max((event.clientX - box.left) / box.width, 0), 1);
+}
+
+function scrub(event) {
+  if (player.duration) player.currentTime = atFraction(barFraction(event));
 }
 
 function setRate(rate) {
@@ -595,6 +709,10 @@ function wire() {
   press("loop-button", toggleLoop);
   press("fullscreen-button", toggleFullscreen);
   element("screen").ondblclick = toggleFullscreen;
+  element("track").addEventListener("wheel", (event) => {
+    event.preventDefault();
+    zoomBy(event.deltaY < 0 ? 1.25 : 1 / 1.25, barFraction(event));
+  }, { passive: false });
   element("track").onpointerdown = (event) => {
     if (event.target.classList.contains("handle")) return;
     state.marker = null;
@@ -616,7 +734,7 @@ function wire() {
     }
     drawTimeline();
   };
-  player.onended = () => { if (!state.looping) step(1); };
+  player.onended = onEnded;
   document.addEventListener("keydown", onKey);
   renderRates();
 }

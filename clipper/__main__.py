@@ -45,8 +45,14 @@ def resolve_library(argument):
 
 
 def free_port(preferred):
-    """`preferred` when it is free, otherwise a port the system picks."""
+    """`preferred` when it is free, otherwise a port the system picks.
+
+    The probe reuses addresses exactly as the server does, so a port still in
+    TIME_WAIT from the previous run counts as free and the address stays stable
+    across restarts.
+    """
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind(("127.0.0.1", preferred))
             return preferred
@@ -91,7 +97,7 @@ def main():
     port = free_port(args.port)
     server = serve(root, args.host, port)
     url = f"http://{args.host}:{port}/"
-    print(f"clipper · {root} · {url}")
+    print(f"clipper · {root} · {url}", flush=True)
     if not args.no_window:
         open_window(url)
     try:
