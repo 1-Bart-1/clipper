@@ -1,4 +1,4 @@
-APP := clipper
+APP := pklipper
 PREFIX ?= $(HOME)/.local
 SHARE := $(PREFIX)/share/$(APP)
 VENV := $(SHARE)/venv
@@ -9,7 +9,7 @@ ICON := $(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg
 .PHONY: install uninstall run check
 
 install:
-	@command -v ffmpeg >/dev/null || { echo "clipper needs ffmpeg: pacman -S ffmpeg"; exit 1; }
+	@command -v ffmpeg >/dev/null || { echo "pklipper needs ffmpeg: pacman -S ffmpeg"; exit 1; }
 	@test -x $(VENV)/bin/python || python3 -m venv $(VENV)
 	@site=$$($(VENV)/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])'); \
 	 rm -rf "$$site/$(APP)" && tar -cf - --exclude=__pycache__ $(APP) | tar -xf - -C "$$site" \
@@ -25,7 +25,7 @@ install:
 uninstall:
 	rm -rf $(SHARE) $(LAUNCHER) $(DESKTOP) $(ICON)
 	@update-desktop-database $(PREFIX)/share/applications 2>/dev/null || true
-	@echo "removed clipper (your photos and clips are untouched)"
+	@echo "removed pklipper (your photos and clips are untouched)"
 
 run:
 	python3 -m $(APP) $(LIBRARY)
@@ -35,3 +35,4 @@ check:
 	node --check $(APP)/static/app.js
 	python3 tools/check_page.py
 	node tools/test_clips.js
+	python3 tools/test_proxies.py

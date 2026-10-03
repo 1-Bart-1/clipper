@@ -18,11 +18,11 @@ DEFAULT_PORT = 8723
 def config_file():
     """Where the last library used is remembered."""
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "clipper" / "library"
+    return base / "pklipper" / "library"
 
 
 def remember(root):
-    """Store `root` as the library a bare `clipper` opens."""
+    """Store `root` as the library a bare `pklipper` opens."""
     path = config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(str(root) + "\n")
@@ -35,10 +35,10 @@ def resolve_library(argument):
     else:
         path = config_file()
         if not path.is_file():
-            sys.exit("no library remembered yet — run: clipper /path/to/your/photos")
+            sys.exit("no library remembered yet — run: pklipper /path/to/your/photos")
         root = Path(path.read_text().strip())
     if not (root / UNFILTERED).is_dir():
-        sys.exit(f"{root} has no {UNFILTERED}/ folder — point clipper at the folder "
+        sys.exit(f"{root} has no {UNFILTERED}/ folder — point pklipper at the folder "
                  f"that holds your originals in {UNFILTERED}/")
     (root / FILTERED).mkdir(exist_ok=True)
     return root
@@ -75,7 +75,7 @@ def open_window(url):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(prog="clipper", description=__doc__)
+    parser = argparse.ArgumentParser(prog="pklipper", description=__doc__)
     parser.add_argument("library", nargs="?",
                         help=f"folder holding {UNFILTERED}/ (default: the last one used)")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -88,7 +88,7 @@ def parse_args():
 def main():
     args = parse_args()
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        sys.exit("clipper needs ffmpeg and ffprobe on the PATH\n"
+        sys.exit("pklipper needs ffmpeg and ffprobe on the PATH\n"
                  "  Arch:    sudo pacman -S ffmpeg\n"
                  "  macOS:   brew install ffmpeg\n"
                  "  Windows: winget install Gyan.FFmpeg")
@@ -97,7 +97,7 @@ def main():
     port = free_port(args.port)
     server = serve(root, args.host, port)
     url = f"http://{args.host}:{port}/"
-    print(f"clipper · {root} · {url}", flush=True)
+    print(f"pklipper · {root} · {url}", flush=True)
     if not args.no_window:
         open_window(url)
     try:

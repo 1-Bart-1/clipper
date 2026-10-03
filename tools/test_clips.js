@@ -44,7 +44,7 @@ const context = {
 context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(
-  path.join(__dirname, "..", "clipper", "static", "app.js"), "utf8"), context);
+  path.join(__dirname, "..", "pklipper", "static", "app.js"), "utf8"), context);
 
 let failures = 0;
 function check(what, got, wanted) {

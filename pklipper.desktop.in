@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Clipper
+Name=PKlipper
 GenericName=Clip picker
 Comment=Review a day's photos and video and keep the good bits
-Exec=clipper
+Exec=pklipper
 Icon=@ICON@
 Terminal=false
 Categories=AudioVideo;Video;Photography;

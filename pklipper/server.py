@@ -208,12 +208,19 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/prepare":
             item = self.wanted_item(query)
             if item:
-                urgent = (query.get("urgent") or ["1"])[0] != "0"
+                priority = int((query.get("priority") or ["0"])[0])
                 state = self.library.proxies.state(item.relpath)
                 if state == "absent":
-                    state = self.library.proxies.request(item.relpath, urgent)
+                    state = self.library.proxies.request(item.relpath, priority)
                 self.send_json({"state": state,
                                 "error": self.library.proxies.complaint(item.relpath)})
+        elif route == "/api/warm":
+            day = (query.get("day") or [""])[0]
+            wanted = [item for item in self.library.items
+                      if item.day == day and item.kind == "video"]
+            for item in wanted:
+                self.library.proxies.request(item.relpath, priority=2)
+            self.send_json({"queued": len(wanted)})
         elif route == "/api/video":
             item = self.wanted_item(query)
             if item:

@@ -216,6 +216,7 @@ function applyFilter(startAt) {
     item.day === state.day && !(hideSaved && item.saves.length));
   renderDays();
   renderStrip();
+  fetch(`/api/warm?day=${encodeURIComponent(state.day)}`).catch(() => undefined);
   const clips = state.visible.reduce((total, item) => total + item.saves.length, 0);
   element("count").textContent = `${state.visible.length} files · ${clips} keepers`;
   select(Math.min(startAt, state.visible.length - 1));
@@ -340,7 +341,7 @@ function prefetchNeighbours() {
   state.visible.slice(state.current + 1, state.current + 4)
     .filter((item) => item.kind === "video")
     .forEach((item) => {
-      fetch(`/api/prepare?f=${encodeURIComponent(item.relpath)}&urgent=0`)
+      fetch(`/api/prepare?f=${encodeURIComponent(item.relpath)}&priority=1`)
         .catch(() => undefined);
     });
 }

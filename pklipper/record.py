@@ -1,6 +1,6 @@
 """The two human-editable records of what was kept out of the unfiltered tree.
 
-`cuts.csv` holds video cuts in the format `clipper.slice` already consumes, so a
+`cuts.csv` holds video cuts in the format `pklipper.slice` already consumes, so a
 whole day can be re-cut from the originals at any time. `picks.csv` holds photos,
 which are copied rather than cut and therefore need no timestamps.
 """
@@ -14,7 +14,7 @@ PICKS_SHEET = "picks.csv"
 
 
 def stamp(total_seconds):
-    """Format seconds as H:MM:SS.mmm, the spelling `clipper.slice` parses."""
+    """Format seconds as H:MM:SS.mmm, the spelling `pklipper.slice` parses."""
     return "{:d}:{:02d}:{:06.3f}".format(int(total_seconds // 3600),
                                          int(total_seconds % 3600 // 60),
                                          total_seconds % 60)

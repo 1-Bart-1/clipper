@@ -13,10 +13,13 @@ from pathlib import Path
 
 from .slice import VIDEO_SUFFIXES, ffmpeg_command
 
-CACHE_DIR = ".clipper"
+CACHE_DIR = ".pklipper"
 THUMB_HEIGHT = 320
 PROXY_HEIGHT = 720
 VIEW_WIDTH = 2400
+PROXY_PRESET = "ultrafast"
+URGENT_BUILDS = 3
+BACKGROUND_THREADS = 3
 FFMPEG_QUIET = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
 
 
@@ -55,13 +58,18 @@ def build_view(source, target):
                 "-vf", f"scale='min({VIEW_WIDTH},iw)':-2", "-q:v", "3", str(target)])
 
 
-def build_proxy(source, target):
-    """Write a 720p MP4 the browser can play and scrub, timeline unchanged."""
+def build_proxy(source, target, background=False):
+    """Write a 720p MP4 the browser can play and scrub, timeline unchanged.
+
+    A background build is held to a few threads so warming a day's worth of
+    files does not take the machine away from whatever is being watched.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_suffix(".part.mp4")
-    done, complaint = report([*FFMPEG_QUIET, "-i", str(source),
+    threads = ["-threads", str(BACKGROUND_THREADS)] if background else []
+    done, complaint = report([*FFMPEG_QUIET, *threads, "-i", str(source),
                               "-vf", f"scale=-2:{PROXY_HEIGHT}",
-                              "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                              "-c:v", "libx264", "-preset", PROXY_PRESET, "-crf", "26",
                               "-g", "50", "-c:a", "aac", "-b:a", "128k",
                               "-movflags", "+faststart", str(partial)])
     if done:
@@ -72,7 +80,12 @@ def build_proxy(source, target):
 
 
 class ProxyPool:
-    """Builds playback proxies in the background, newest request served first."""
+    """Builds playback proxies, with the file being watched never queued.
+
+    Background work — the next few files, then the rest of the day — runs on a
+    small pool. A file somebody is waiting on is built on the spot instead, so
+    opening it never waits behind work nobody asked for yet.
+    """
 
     def __init__(self, source_root, cache_root, workers=2):
         self.source_root = source_root
@@ -81,6 +94,7 @@ class ProxyPool:
         self.complaints = {}
         self.lock = threading.Lock()
         self.pending = queue.PriorityQueue()
+        self.rush = threading.Semaphore(URGENT_BUILDS)
         self.ticket = 0
         for number in range(workers):
             threading.Thread(target=self.work, name=f"proxy-{number}",
@@ -102,38 +116,71 @@ class ProxyPool:
         with self.lock:
             return self.states.get(relpath, "absent")
 
-    def request(self, relpath, urgent=True):
-        """Queue `relpath` for a proxy unless it already has one."""
-        if self.state(relpath) in {"ready", "working", "queued"}:
-            return self.state(relpath)
+    def request(self, relpath, priority=0):
+        """Start `relpath` building unless it already is, or already has a proxy.
+
+        Priority 0 is built on the spot, even for a file already waiting in the
+        background queue: whoever is watching should never sit behind warming
+        work. The stale queue entry is harmless, since only one thread can
+        claim a build.
+        """
+        state = self.state(relpath)
+        if state in {"ready", "working"}:
+            return state
+        if state == "queued" and priority > 0:
+            return state
         with self.lock:
             self.states[relpath] = "queued"
             self.ticket += 1
             ticket = self.ticket
-        self.pending.put((0 if urgent else 1, ticket, relpath))
+        if priority == 0:
+            threading.Thread(target=self.rush_build, args=(relpath,),
+                             name=f"rush-{ticket}", daemon=True).start()
+        else:
+            self.pending.put((priority, ticket, relpath))
         return "queued"
 
-    def work(self):
-        """Drain the queue, building one proxy at a time.
+    def claim(self, relpath):
+        """Take ownership of building `relpath`, or False if someone else has."""
+        with self.lock:
+            if self.states.get(relpath) in {"working", "ready"}:
+                return False
+            if self.target(relpath).is_file():
+                self.states[relpath] = "ready"
+                return False
+            self.states[relpath] = "working"
+            return True
 
-        A worker must outlive any single failure: if it died, every later
-        request would sit in `queued` for ever and the viewer would spin.
+    def rush_build(self, relpath):
+        """Build one proxy straight away, a few at a time at most."""
+        with self.rush:
+            self.build(relpath)
+
+    def build(self, relpath, background=False):
+        """Make one proxy and record how it went.
+
+        This must never raise: a worker that died would leave every later
+        request sitting in `queued` for ever and the viewer spinning.
         """
+        if not self.claim(relpath):
+            return
+        try:
+            done, complaint = build_proxy(self.source_root / relpath,
+                                          self.target(relpath), background)
+        except Exception as mishap:
+            done, complaint = False, repr(mishap)
+        with self.lock:
+            self.states[relpath] = "ready" if done else "failed"
+            if complaint:
+                self.complaints[relpath] = complaint
+        if not done:
+            print(f"proxy failed for {relpath}: {complaint}", flush=True)
+
+    def work(self):
+        """Drain the background queue, one proxy at a time."""
         while True:
             _, _, relpath = self.pending.get()
-            with self.lock:
-                self.states[relpath] = "working"
-            try:
-                done, complaint = build_proxy(self.source_root / relpath,
-                                              self.target(relpath))
-            except Exception as mishap:
-                done, complaint = False, repr(mishap)
-            with self.lock:
-                self.states[relpath] = "ready" if done else "failed"
-                if complaint:
-                    self.complaints[relpath] = complaint
-            if not done:
-                print(f"proxy failed for {relpath}: {complaint}")
+            self.build(relpath, background=True)
             self.pending.task_done()
 
 

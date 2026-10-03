@@ -16,13 +16,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Python compiles
-        run: python -m compileall -q clipper
+        run: python -m compileall -q pklipper
       - name: JavaScript parses
-        run: node --check clipper/static/app.js
+        run: node --check pklipper/static/app.js
       - name: Every id the page script reaches for exists in the markup
         run: python tools/check_page.py
       - name: Clip arithmetic behaves
         run: node tools/test_clips.js
+      - name: A watched file never waits behind warming work
+        run: python tools/test_proxies.py
 
   build:
     needs: check
@@ -48,19 +50,19 @@ jobs:
       - run: pip install pyinstaller
       - name: Bundle a single executable
         run: >
-          pyinstaller --onefile --noconsole --name clipper
-          --add-data "clipper/static${{ matrix.separator }}clipper/static"
+          pyinstaller --onefile --noconsole --name pklipper
+          --add-data "pklipper/static${{ matrix.separator }}pklipper/static"
           main.py
       - name: Collect the download
         shell: bash
         run: |
           mkdir -p download
           cp README.md LICENSE download/
-          cp dist/clipper dist/clipper.exe download/ 2>/dev/null || true
+          cp dist/pklipper dist/pklipper.exe download/ 2>/dev/null || true
           ls -la download
       - uses: actions/upload-artifact@v4
         with:
-          name: clipper-${{ matrix.label }}
+          name: pklipper-${{ matrix.label }}
           path: download/*
           if-no-files-found: error
 

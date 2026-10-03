@@ -3,7 +3,7 @@ import re
 import sys
 from pathlib import Path
 
-static = Path(__file__).resolve().parent.parent / "clipper" / "static"
+static = Path(__file__).resolve().parent.parent / "pklipper" / "static"
 markup = (static / "index.html").read_text()
 script = (static / "app.js").read_text()
 declared = set(re.findall(r'id="([^"]+)"', markup))
