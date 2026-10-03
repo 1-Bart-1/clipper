@@ -69,9 +69,15 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; 
   position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
   background: var(--text); pointer-events: none;
 }
-.band { position: absolute; top: 0; bottom: 0; background: #5bc8ff26; }
-.band[data-saved] { background: #46d17f22; }
-.band[data-active] { background: #5bc8ff3d; outline: 1px solid #5bc8ff66; }
+.band {
+  position: absolute; top: 0; bottom: 0; background: #5bc8ff1f;
+  border: 1px solid transparent; border-radius: 3px; cursor: pointer;
+}
+.band[data-saved] { background: #46d17f1a; }
+.band[data-active] {
+  background: #5bc8ff40; border-color: var(--accent); cursor: default;
+}
+.band[data-active] .tag { color: var(--text); }
 .band .tag {
   position: absolute; top: 2px; left: 4px; font-size: 11px; color: var(--dim);
   pointer-events: none; white-space: nowrap; overflow: hidden; max-width: 100%;

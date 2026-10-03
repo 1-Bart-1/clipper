@@ -124,6 +124,40 @@ vm.runInContext("state.zoom = 4; state.offset = 0; player.currentTime = 50; onTi
 check("the playhead is followed when it leaves the window",
       vm.runInContext("view().start", context), 42.5);
 
+console.log("a fresh clip spans the file, not whatever was loaded before");
+setUp([], 20);
+vm.runInContext("player.duration = 90", context);  // the previous, longer file
+vm.runInContext("addClip()", context);
+check("the new clip uses this file's length", ranges(), [[0, 20]]);
+vm.runInContext(`
+  state.clips = [{start: 0, end: 90, name: "", saved: false, untouched: true}];
+  state.active = 0;
+  onMetadata();
+`, context);
+check("loading the file corrects an untouched clip", ranges(), [[0, 20]]);
+vm.runInContext(`
+  state.clips = [{start: 1, end: 5, name: "", saved: false, untouched: false}];
+  state.active = 0;
+  onMetadata();
+`, context);
+check("loading the file leaves a trimmed clip alone", ranges(), [[1, 5]]);
+
+console.log("picking a clip off the bar");
+setUp([{ start: 0, end: 10, name: "one", saved: false, untouched: false },
+       { start: 20, end: 30, name: "two", saved: false, untouched: false }]);
+vm.runInContext("selectClip(1)", context);
+check("the clicked clip becomes active", vm.runInContext("state.active", context), 1);
+check("playback jumps to its in point",
+      vm.runInContext("player.currentTime", context), 20);
+vm.runInContext("player.currentTime = 30.5; onTimeUpdate()", context);
+check("it loops that clip and not the other one",
+      vm.runInContext("player.currentTime", context), 20);
+vm.runInContext("state.marker = 'end'; moveMarker(1)", context);
+check("its handle moves, the other clip's does not", ranges(), [[0, 10], [20, 31]]);
+vm.runInContext("selectClip(0); state.marker = 'start'; moveMarker(2)", context);
+check("and the same holds once the first clip is picked up",
+      ranges(), [[2, 10], [20, 31]]);
+
 console.log("undo");
 setUp([{ start: 0, end: 60, name: "", saved: false, untouched: true }]);
 vm.runInContext("state.history = []; addClip(); markIn()", context);

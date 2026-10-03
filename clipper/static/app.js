@@ -97,9 +97,14 @@ function undo() {
   playActiveClip();
 }
 
+/** How long the file under the cursor is, whatever the player has loaded. */
+function mediaSpan() {
+  return currentItem()?.duration || player.duration || 0;
+}
+
 /** The stretch of the video the bar currently shows, in seconds. */
 function view() {
-  const span = player.duration || currentItem()?.duration || 0;
+  const span = mediaSpan();
   const width = span / state.zoom;
   const start = Math.min(Math.max(state.offset, 0), Math.max(span - width, 0));
   return { span, start, width: width || 1 };
@@ -341,13 +346,13 @@ function prefetchNeighbours() {
 }
 
 function wholeVideo() {
-  const span = player.duration || currentItem()?.duration || 0;
+  const span = mediaSpan();
   return { start: 0, end: span || null, name: "", saved: false, untouched: true };
 }
 
 function addClip() {
   remember();
-  const span = player.duration || currentItem()?.duration || 0;
+  const span = mediaSpan();
   const ends = state.clips.map((clip) => clip.end ?? clip.start ?? 0);
   const lastEnd = ends.length ? Math.max(...ends) : 0;
   if (!state.clips.length || !span) {
@@ -413,6 +418,14 @@ function drawTimeline() {
     band.style.width = `${Math.max(((end - clip.start) / window.width) * 100, 0.4)}%`;
     if (clip.saved) band.dataset.saved = "1";
     if (index === state.active) band.dataset.active = "1";
+    band.dataset.index = String(index);
+    band.onpointerdown = (event) => {
+      // A click inside the clip already being worked on scrubs, as the bare
+      // track does; a click on any other clip picks that one up instead.
+      if (index === state.active) return;
+      event.stopPropagation();
+      selectClip(index);
+    };
     if (clip.name) {
       const tag = document.createElement("span");
       tag.className = "tag";
@@ -698,6 +711,17 @@ function onKey(event) {
   action();
 }
 
+function onMetadata() {
+  player.playbackRate = state.rate;
+  for (const clip of state.clips) {
+    if (clip.untouched) {
+      clip.start = 0;
+      clip.end = mediaSpan();
+    }
+  }
+  drawTimeline();
+}
+
 function onEnded() {
   if (state.looping) playActiveClip();
   else step(1);
@@ -800,13 +824,7 @@ function wire() {
     drawTimeline();
   };
   player.ontimeupdate = onTimeUpdate;
-  player.onloadedmetadata = () => {
-    player.playbackRate = state.rate;
-    for (const clip of state.clips) {
-      if (clip.untouched && clip.end === null) clip.end = player.duration;
-    }
-    drawTimeline();
-  };
+  player.onloadedmetadata = onMetadata;
   player.onended = onEnded;
   document.addEventListener("keydown", onKey);
   renderRates();
