@@ -10,7 +10,7 @@ ICON := $(PREFIX)/share/icons/hicolor/scalable/apps/$(APP).svg
 
 install:
 	@command -v ffmpeg >/dev/null || { echo "clipper needs ffmpeg: pacman -S ffmpeg"; exit 1; }
-	python3 -m venv --clear $(VENV)
+	@test -x $(VENV)/bin/python || python3 -m venv $(VENV)
 	@site=$$($(VENV)/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])'); \
 	 rm -rf "$$site/$(APP)" && tar -cf - --exclude=__pycache__ $(APP) | tar -xf - -C "$$site" \
 	 && echo "installed package into $$site"
