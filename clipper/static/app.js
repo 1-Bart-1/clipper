@@ -219,11 +219,17 @@ function prefetchNeighbours() {
     });
 }
 
+function wholeVideo() {
+  const span = player.duration || currentItem()?.duration || 0;
+  return { start: 0, end: span || null, name: "", saved: false, untouched: true };
+}
+
 function addClip() {
-  if (state.clips.some((clip) => !clip.saved && clip.start === null)) {
-    state.active = state.clips.findIndex((clip) => !clip.saved && clip.start === null);
+  const fresh = state.clips.findIndex((clip) => !clip.saved && clip.untouched);
+  if (fresh >= 0) {
+    state.active = fresh;
   } else {
-    state.clips.push({ start: null, end: null, name: "", saved: false });
+    state.clips.push(wholeVideo());
     state.active = state.clips.length - 1;
   }
   state.marker = null;
@@ -271,6 +277,7 @@ function drawTimeline() {
       handle.className = "handle";
       handle.style.left = `${(clip[edge] / span) * 100}%`;
       handle.dataset.edge = edge;
+      handle.dataset.label = edge === "start" ? "IN" : "OUT";
       if (state.marker === edge) handle.dataset.selected = "1";
       handle.onpointerdown = (event) => startDrag(event, edge);
       bands.append(handle);
@@ -284,7 +291,12 @@ function drawTimeline() {
         : `in ${stamp(clip.start)}`)
     : "";
   element("selected").textContent =
-    summary + (state.marker ? `  ·  ${state.marker} marker selected` : "");
+    summary + (state.marker ? `  ·  ${state.marker === "start" ? "IN" : "OUT"} selected` : "");
+  element("hint").textContent = clip && !clip.saved
+    ? (clip.untouched ? "drag the IN and OUT handles, or press i / o at the playhead"
+                      : (state.marker ? "arrows move it 1 s · shift+arrows one frame"
+                                      : "click a handle to nudge it with the arrows"))
+    : "";
 }
 
 function renderChips() {
@@ -324,6 +336,7 @@ function markIn() {
   const clip = editable();
   if (!clip || !player.duration) return;
   clip.start = player.currentTime;
+  clip.untouched = false;
   if (clip.end !== null && clip.end <= clip.start) clip.end = null;
   state.marker = "start";
   drawTimeline();
@@ -339,6 +352,7 @@ function markOut() {
     return;
   }
   clip.end = player.currentTime;
+  clip.untouched = false;
   state.marker = "end";
   drawTimeline();
   updateSaveButton();
@@ -347,8 +361,7 @@ function markOut() {
 function clearMarks() {
   const clip = editable();
   if (!clip) return;
-  clip.start = null;
-  clip.end = null;
+  Object.assign(clip, wholeVideo(), { name: clip.name });
   state.marker = null;
   state.looping = false;
   element("loop-button").setAttribute("aria-pressed", "false");
@@ -369,6 +382,7 @@ function moveMarker(delta) {
       : Math.max(moved, clip.start + frame());
   }
   clip[state.marker] = moved;
+  clip.untouched = false;
   player.currentTime = moved;
   drawTimeline();
 }
@@ -390,6 +404,7 @@ function startDrag(event, edge) {
                             : Math.max(at, other + frame());
     }
     clip[edge] = at;
+    clip.untouched = false;
     player.currentTime = at;
     drawTimeline();
   };
@@ -596,6 +611,9 @@ function wire() {
   player.ontimeupdate = onTimeUpdate;
   player.onloadedmetadata = () => {
     player.playbackRate = state.rate;
+    for (const clip of state.clips) {
+      if (clip.untouched && clip.end === null) clip.end = player.duration;
+    }
     drawTimeline();
   };
   player.onended = () => { if (!state.looping) step(1); };

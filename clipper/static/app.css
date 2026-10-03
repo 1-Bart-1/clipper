@@ -9,6 +9,7 @@
   --warn: #ff7a6b;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 14px/1.45 system-ui, "Inter", sans-serif;
@@ -71,15 +72,20 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; 
   pointer-events: none; white-space: nowrap; overflow: hidden; max-width: 100%;
 }
 .handle {
-  position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px;
-  cursor: ew-resize; display: grid; place-items: center;
+  position: absolute; top: 0; bottom: 0; width: 18px; margin-left: -9px;
+  cursor: ew-resize; display: grid; place-items: center; z-index: 2;
 }
-.handle::before { content: ""; width: 3px; height: 100%; background: var(--keep); }
-.handle[data-selected]::before { background: var(--accent); width: 5px; }
+.handle::before {
+  content: attr(data-label); width: 18px; height: 100%; background: var(--keep);
+  color: #06240f; font-size: 9px; font-weight: 700; letter-spacing: .02em;
+  display: grid; place-items: center; border-radius: 3px;
+}
+.handle[data-selected]::before { background: var(--accent); color: #04222e; }
 .handle[data-selected]::after {
   content: ""; position: absolute; inset: -2px -3px; border: 1px solid var(--accent);
   border-radius: 3px;
 }
+.hint { color: var(--dim); font-size: 12px; }
 #clips { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 0; }
 .chip {
   display: flex; align-items: center; gap: 6px; padding: 3px 10px;
