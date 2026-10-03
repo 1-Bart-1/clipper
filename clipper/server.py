@@ -84,8 +84,13 @@ class Library:
         return target
 
 
-def send_file(handler, path, content_type=None):
-    """Send `path` whole, or the requested byte range for a media player."""
+def send_file(handler, path, content_type=None, cache=True):
+    """Send `path` whole, or the requested byte range for a media player.
+
+    The page and its script carry `no-cache` so a reload always picks up a
+    newly installed version; derived media is content-addressed by name and
+    stays cacheable.
+    """
     size = path.stat().st_size
     content_type = content_type or mimetypes.guess_type(path.name)[0] \
         or "application/octet-stream"
@@ -109,6 +114,8 @@ def send_file(handler, path, content_type=None):
     handler.send_response(206 if partial else 200)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Accept-Ranges", "bytes")
+    if not cache:
+        handler.send_header("Cache-Control", "no-cache, must-revalidate")
     handler.send_header("Content-Length", str(end - start + 1))
     if partial:
         handler.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -148,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path.is_file() or STATIC_DIR.resolve() not in path.parents:
             self.send_error(404)
             return
-        send_file(self, path)
+        send_file(self, path, cache=False)
 
     def send_image(self, path):
         """Send a derived JPEG, or report that ffmpeg could not make one."""
